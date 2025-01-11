@@ -1,0 +1,93 @@
+import json
+import asyncio
+from .Object.Ball import Ball
+from channels.generic.websocket import AsyncWebsocketConsumer
+
+class GameConsumer(AsyncWebsocketConsumer):
+    paddle1Y = 200
+    paddle2Y = 200
+    paddle_height = 100
+    canvas_height = 600
+    canvas_width = 800
+    ball = Ball(0, 0)
+    move_step = 10
+    player1_score = 0
+    player2_score = 0
+
+    async def connect(self):
+        await self.accept()
+
+        self.running = True
+        asyncio.create_task(self.ball_update_loop())
+
+        initial_positions = {
+            "paddle1Y": self.paddle1Y,
+            "paddle2Y": self.paddle2Y,
+            "ballX": self.ball.x,
+            "ballY": self.ball.y,
+            "player1Score": self.player1_score,
+            "player2Score": self.player2_score,
+        }
+        await self.send(json.dumps(initial_positions))
+        await self.send(text_data=json.dumps({"message": "Estoy en un WebSocket"}))
+
+    async def disconnect(self, close_code):
+        self.running = False
+        print("WebSocket malito :c")
+
+    async def receive(self, text_data):
+        data = json.loads(text_data)
+        keys = data.get("keys", [])
+
+        if "canvasHeight" in data:
+            self.canvas_height = data["canvasHeight"]
+            print(f"Altura del canvas recibida: {self.canvas_height}")
+        if "canvasWidth" in data:
+            self.canvas_width = data["canvasWidth"]
+            print(f"Ancho del canvas recibido: {self.canvas_width}")
+
+        if "posPaddle1" in data:
+            self.paddle1Y = data["posPaddle1"]
+        if "posPaddle2" in data:
+            self.paddle2Y = data["posPaddle2"]
+
+        if "w" in keys:
+            self.paddle1Y = min(self.paddle1Y + self.move_step, self.canvas_height / 2 - self.paddle_height / 2)
+        if "s" in keys:
+            self.paddle1Y = max(self.paddle1Y - self.move_step, -self.canvas_height / 2 + self.paddle_height / 2)
+        if "ArrowUp" in keys:
+            self.paddle2Y = min(self.paddle2Y + self.move_step, self.canvas_height / 2 - self.paddle_height / 2)
+        if "ArrowDown" in keys:
+            self.paddle2Y = max(self.paddle2Y - self.move_step, -self.canvas_height / 2 + self.paddle_height / 2)
+
+    async def ball_update_loop(self):
+        while self.running:
+
+            self.ball.move()
+            self.ball.check_collision(
+                self.paddle1Y, self.paddle2Y, self.canvas_width, self.canvas_height,
+                paddle_width=10, paddle_height=self.paddle_height
+            )
+
+            if self.ball.x - self.ball.radius < -self.canvas_width / 2:
+                self.player2_score += 1
+                self.reset_ball()
+            elif self.ball.x + self.ball.radius > self.canvas_width / 2:
+                self.player1_score += 1
+                self.reset_ball()
+
+            updated_positions = {
+                "paddle1Y": self.paddle1Y,
+                "paddle2Y": self.paddle2Y,
+                "ballX": self.ball.x,
+                "ballY": self.ball.y,
+                "player1Score": self.player1_score,
+                "player2Score": self.player2_score, 
+            }
+            await self.send(json.dumps(updated_positions))
+
+            await asyncio.sleep(0.03)
+
+    def reset_ball(self):
+        self.ball.reset()
+        self.ball.dx *= -1
